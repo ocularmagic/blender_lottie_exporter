@@ -1,3 +1,8 @@
+# This works in Blender 4.4.3
+# If you're going to use the optimize SVG check mark when exporting,
+# make sure you check dependencies when installing this add-on.
+# Also make sure you have a camera in the scene.
+
 import shutil
 import bpy
 import os
