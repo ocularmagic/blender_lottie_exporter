@@ -1,4 +1,5 @@
 # Blender Lottie Exporter
+# Updated to work in Blender 4.4.3
 
 Support exporting Grease Pencil as Lottie:
 - `Export > Grease Pencil as Lottie(.json)`
