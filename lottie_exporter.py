@@ -19,18 +19,40 @@ import sys
 #                         text=str(" ".join([str(x) for x in data])), type="OUTPUT"
 #                     )
 
-
 def write_seq(filepath: str, frame_start, frame_end, opt: bool, scene: bpy.types.Scene):
     os.mkdir(f"{filepath}_seq_dir")
     for i in range(frame_start, frame_end + 1):
         scene.frame_set(i)
         path = f"{filepath}_seq_dir/{str(i)}.svg"
-        bpy.ops.wm.gpencil_export_svg(
-            filepath=path,
-            use_fill=True,
-            use_normalized_thickness=False,
-            use_clip_camera=True,
-        )
+        
+        # Use the correct SVG export operator for Blender 4.4
+        try:
+            bpy.ops.wm.grease_pencil_export_svg(
+                filepath=path,
+                use_fill=True,
+                use_uniform_width=False,
+                use_clip_camera=True,
+                selected_object_type='ACTIVE',  # Export only the active Grease Pencil object
+                stroke_sample=0.0,  # No sampling for maximum precision
+                check_existing=False  # Avoid warnings about overwriting files
+            )
+            print(f"Success: Exported SVG for frame {i} using bpy.ops.wm.grease_pencil_export_svg")
+        except AttributeError as e:
+            print(f"Error: Failed to call bpy.ops.wm.grease_pencil_export_svg: {str(e)}")
+            # List available operators for debugging
+            print("Available operators in bpy.ops.wm:")
+            for attr in dir(bpy.ops.wm):
+                if 'svg' in attr.lower() or 'grease_pencil' in attr.lower():
+                    print(f"  wm.{attr}")
+            print("Available operators in bpy.ops.export_scene:")
+            for attr in dir(bpy.ops.export_scene):
+                if 'svg' in attr.lower() or 'gpencil' in attr.lower():
+                    print(f"  export_scene.{attr}")
+            raise AttributeError(
+                "Grease Pencil SVG export operator not found. Ensure a Grease Pencil object is active, "
+                "the scene is set up correctly, and the SVG export functionality is available in Blender 4.4."
+            )
+        
         with open(path, "r+") as f:
             svg = f.read()
             svg = (
@@ -45,7 +67,6 @@ def write_seq(filepath: str, frame_start, frame_end, opt: bool, scene: bpy.types
             f.truncate()
             if opt:
                 from scour.scour import scourString
-
                 svg = scourString(
                     svg,
                     {
@@ -79,90 +100,70 @@ def export_lottie(
         "w": -1,  # init later
         "h": -1,  # init later
         "assets": [],
-        # "fonts": {"list": []},
         "layers": [],
     }
     write_seq(filepath, frame_start, frame_end, opt, scene)
     for i in range(frame_start, frame_end + 1):
-        f = open(
-            f"{filepath}_seq_dir/{str(i)}.svg",
-            "r",
-        )
-        svg = f.read()
-        f.close()
-        width_span = re.search(r"width=\"\d+\"", svg).span()
-        height_span = re.search(r"height=\"\d+\"", svg).span()
-        width = int(svg[width_span[0] : width_span[1]].split('"')[-2])
-        height = int(svg[height_span[0] : height_span[1]].split('"')[-2])
+        svg_path = f"{filepath}_seq_dir/{str(i)}.svg"
+        try:
+            with open(svg_path, "r") as f:
+                svg = f.read()
+        except Exception as e:
+            print(f"Error: Failed to read SVG file {svg_path}: {str(e)}")
+            raise RuntimeError(f"Cannot read SVG file for frame {i}. Ensure the Grease Pencil object is valid and visible.")
+
+        if not svg.strip():
+            print(f"Error: SVG file {svg_path} is empty.")
+            raise RuntimeError(f"SVG file for frame {i} is empty. Check your Grease Pencil object or export settings.")
+
+        # Updated regex to match width/height with integers, floats, or units (e.g., "100", "100.0", "100px")
+        width_match = re.search(r'width="([\d.]+)(?:px)?"', svg)
+        height_match = re.search(r'height="([\d.]+)(?:px)?"', svg)
+
+        if not width_match or not height_match:
+            print(f"Error: Could not find width/height attributes in SVG file {svg_path}.")
+            print(f"SVG content (first 500 chars): {svg[:500]}")
+            raise RuntimeError(
+                f"Invalid SVG format for frame {i}. Expected width/height attributes (e.g., width=\"100\" or width=\"100px\"). "
+                "Check the Grease Pencil object, camera settings, or SVG export operator."
+            )
+
+        try:
+            width = float(width_match.group(1))  # Convert to float to handle both int and decimal
+            height = float(height_match.group(1))
+        except ValueError as e:
+            print(f"Error: Invalid width/height values in SVG file {svg_path}: {str(e)}")
+            raise RuntimeError(f"Cannot parse width/height for frame {i}. Values found: width={width_match.group(1)}, height={height_match.group(1)}")
+
         if lottie["w"] < width:
             lottie["w"] = width
         if lottie["h"] < height:
             lottie["h"] = height
+
         asset = {
-            "id": f"svg_{i}",  # string
-            # Unique identifier used by layers when referencing this asset
-            "nm": f"svg_{i}",  # string
-            # Human readable name
-            "u": "",  # string
-            # Path to the directory containing a file
-            "p": f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}",  # string
-            # Filename or data url
-            "e": 1,  # integer
-            # Whether the file is embedded
-            "w": width,  # number
-            # Width of the image
-            "h": height,  # number
-            # Height of the image
-            "t": "seq",  # string = 'seq'
-            # Marks as part of an image sequence if present
-            # "sid": "",  # string
-            # One of the ID in the file's slots
+            "id": f"svg_{i}",
+            "nm": f"svg_{i}",
+            "u": "",
+            "p": f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}",
+            "e": 1,
+            "w": width,
+            "h": height,
+            "t": "seq",
         }
         lottie["assets"].append(asset)
         layer = {
-            "nm": f"frame_{i}",  # string
-            # Name
-            # Name, as seen from editors and the like
-            "hd": False,  # boolean
-            # Hidden
-            # Whether the layer is hidden
-            "ty": 2,  # integer = 2
-            # Type
-            # Layer type
-            # "ind": i,  # integer
-            # Index
-            # Index that can be used for parenting and referenced in expressions
-            # "parent": i - 1 if i >= 1 else None,  # integer
-            # Parent Index
-            # Must be the ind property of another layer
-            # "sr": 1,  # number
-            # Time Stretch
-            # Time Stretch
-            "ip": i,  # number
-            # In Point
-            # Frame when the layer becomes visible
-            "op": i + 1,  # number
-            # Out Point
-            # Frame when the layer becomes invisible
-            "st": i / frame_rate,  # number
-            # Start Time
-            # Start Time
-            "ks": {},  # Transform
-            # Transform
-            # Layer transform
-            "ao": 0,  # integer
-            # Auto Orient
-            # If 1, The layer will rotate itself to match its animated position path
-            "refId": f"svg_{i}",  # string
-            # Reference Id
-            # ID of the image as specified in the assets
+            "nm": f"frame_{i}",
+            "hd": False,
+            "ty": 2,
+            "ip": i,
+            "op": i + 1,
+            "st": i / frame_rate,
+            "ks": {},
+            "ao": 0,
+            "refId": f"svg_{i}",
         }
-        if asset["w"] > lottie["w"]:
-            lottie["w"] = asset["w"]
-        if asset["h"] > lottie["h"]:
-            lottie["h"] = asset["h"]
-
         lottie["layers"].append(layer)
+
     shutil.rmtree(f"{filepath}_seq_dir")
     with open(filepath, "w") as t:
         json.dump(lottie, t)
